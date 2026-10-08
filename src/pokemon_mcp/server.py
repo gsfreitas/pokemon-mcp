@@ -10,25 +10,20 @@ Boas práticas aplicadas:
 - logs sempre em stderr: no transporte stdio, stdout é o canal do protocolo.
 """
 
-import argparse
 import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Annotated, Literal, cast
 
 import httpx
-import uvicorn
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError, ResourceNotFoundError, ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
 from pokemon_mcp.config import Settings
-from pokemon_mcp.http_app import create_http_app
 from pokemon_mcp.models import Pokemon, SquadError, TournamentSquad
 from pokemon_mcp.pokeapi import PokeAPIClient, PokeAPIError, PokemonNotFoundError
 
@@ -186,13 +181,6 @@ def build_server(
             "papéis (atacante, tanque, suporte) e sugira até duas substituições."
         )
 
-    # ----------------------------------------------------------- HTTP extras
-
-    @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
-    async def health(_: Request) -> JSONResponse:
-        """Health check do load balancer (público, não toca na PokeAPI)."""
-        return JSONResponse({"status": "ok"})
-
     return mcp
 
 
@@ -200,34 +188,8 @@ def build_server(
 mcp = build_server()
 
 
-def main(argv: list[str] | None = None) -> None:
-    settings = Settings.from_env()
-    parser = argparse.ArgumentParser(prog="pokemon-mcp", description="Servidor MCP de Pokémon.")
-    parser.add_argument(
-        "--transport",
-        choices=["stdio", "streamable-http"],
-        default=settings.transport,
-        help="stdio para clientes locais; streamable-http para expor na rede (padrão: %(default)s).",
-    )
-    parser.add_argument("--host", default=settings.host, help="Interface HTTP (padrão: %(default)s).")
-    parser.add_argument("--port", type=int, default=settings.port, help="Porta HTTP (padrão: %(default)s).")
-    args = parser.parse_args(argv)
-
-    if args.transport == "stdio":
-        mcp.run(transport="stdio")
-        return
-
-    settings = replace(settings, host=args.host, port=args.port)
-    app = create_http_app(mcp, settings)
-    # proxy_headers: confia no X-Forwarded-* do ALB para logar o IP real do agente.
-    uvicorn.run(
-        app,
-        host=settings.host,
-        port=settings.port,
-        log_level=settings.log_level.lower(),
-        proxy_headers=True,
-        forwarded_allow_ips="*",
-    )
+def main() -> None:
+    mcp.run(transport="stdio")
 
 
 if __name__ == "__main__":

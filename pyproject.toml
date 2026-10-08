@@ -8,8 +8,6 @@ dependencies = [
     "httpx>=0.28.1",
     "mcp[cli]>=2.3.0",
     "pydantic>=2.13",
-    "starlette>=1.7",
-    "uvicorn>=0.54",
 ]
 
 [project.scripts]

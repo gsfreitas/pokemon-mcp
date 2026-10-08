@@ -13,10 +13,3 @@ wheels/
 .pytest_cache/
 .ruff_cache/
 
-# Terraform
-.terraform/
-*.tfstate
-*.tfstate.*
-*.tfvars
-!*.tfvars.example
-.terraform.lock.hcl.bak

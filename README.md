@@ -14,13 +14,10 @@ Servidor MCP que expõe dados da [PokeAPI](https://pokeapi.co/).
 ```
 src/pokemon_mcp/
 ├── config.py   # configuração via variáveis de ambiente
-├── http_app.py # app HTTP com autenticação Bearer e health check
 ├── models.py   # modelos Pydantic de saída (geram o outputSchema das tools)
 ├── pokeapi.py  # cliente HTTP da PokeAPI (validação, cache, erros)
 └── server.py   # MCPServer: lifespan, tools, resource e prompt
 tests/          # testes com HTTP mockado (sem rede)
-infra/terraform # deploy na AWS (ECS Fargate + ALB interno)
-Dockerfile      # imagem multi-stage, usuário não-root
 ```
 
 ## Boas práticas aplicadas
@@ -49,8 +46,12 @@ uv run pokemon-mcp
 Inspecionar com o MCP Inspector:
 
 ```bash
-uv run mcp dev src/pokemon_mcp/server.py
+npx -y -p @modelcontextprotocol/inspector mcp-inspector uv run pokemon-mcp
 ```
+
+> `uv run mcp dev` não funciona com o Inspector 2.x: o pacote passou a expor dois
+> binários (`mcp-inspector` e `mcpdo`) e o `npx` não consegue escolher qual executar
+> ("could not determine executable to run"). Por isso o binário é indicado explicitamente.
 
 ### Claude Desktop / Claude Code
 
@@ -65,97 +66,6 @@ uv run mcp dev src/pokemon_mcp/server.py
 }
 ```
 
-### Expor via HTTP para outros agentes
-
-```bash
-uv run pokemon-mcp --transport streamable-http --port 8000
-```
-
-O endpoint fica em `http://127.0.0.1:8000/mcp`. Qualquer cliente MCP com suporte a Streamable HTTP conecta por essa URL:
-
-```bash
-claude mcp add --transport http pokemon http://127.0.0.1:8000/mcp
-```
-
-Fora do loopback (`--host 0.0.0.0`) o servidor **exige** `MCP_AUTH_TOKENS` e recusa subir sem ele. Os agentes enviam
-`Authorization: Bearer <token>`; `/health` fica público para o load balancer. O modo é *stateless*, então várias réplicas
-podem rodar atrás de um load balancer.
-
-## Deploy na AWS (agentes internos)
-
-```
-agentes (VPCs / VPN) ──HTTPS──▶ ALB interno ──▶ ECS Fargate (2+ tasks, multi-AZ) ──NAT──▶ PokeAPI
-                                                   ▲
-                                 Secrets Manager (MCP_AUTH_TOKENS)
-```
-
-O Terraform em [`infra/terraform`](infra/terraform) cria: ECR, ECS Fargate com autoscaling e rollback automático,
-ALB **interno** (sem acesso pela internet), security groups restritos às redes dos agentes, token no Secrets Manager,
-logs no CloudWatch e, opcionalmente, um registro DNS privado no Route 53.
-
-Pré-requisitos: VPC com subnets privadas em 2+ AZs **com NAT** (a PokeAPI é externa), certificado ACM para o nome
-interno e backend remoto do Terraform (o state guarda o token inicial; mantenha-o criptografado).
-
-### 1. Infraestrutura
-
-```bash
-cd infra/terraform
-cp terraform.tfvars.example terraform.tfvars   # preencha VPC, subnets, CIDRs, certificado e DNS
-terraform init
-terraform apply -target=aws_ecr_repository.this   # cria o repositório antes da primeira imagem
-```
-
-### 2. Imagem
-
-```bash
-REPO=$(terraform output -raw ecr_repository_url)
-aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO%%/*}"
-docker build --platform linux/amd64 -t "$REPO:0.1.0" ../..
-docker push "$REPO:0.1.0"
-```
-
-### 3. Serviço
-
-```bash
-terraform apply -var image_tag=0.1.0
-terraform output mcp_url
-```
-
-Para uma nova versão: build/push com uma tag nova e `terraform apply -var image_tag=<tag>`.
-
-### 4. Conectar os agentes
-
-```bash
-aws secretsmanager get-secret-value --secret-id pokemon-mcp/auth-tokens --query SecretString --output text
-```
-
-Claude Code:
-
-```bash
-claude mcp add --transport http pokemon https://pokemon-mcp.interno.empresa.com/mcp --header "Authorization: Bearer <token>"
-```
-
-Python (SDK `mcp`):
-
-```python
-import httpx2
-from mcp import Client
-from mcp.client.streamable_http import streamable_http_client
-
-http = httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"})
-async with Client(streamable_http_client(MCP_URL, http_client=http)) as client:
-    result = await client.call_tool("get_pokemon_info", {"pokemon_name": "pikachu"})
-```
-
-Distribua o token aos times pelo próprio Secrets Manager (permissão IAM de leitura no secret), nunca por chat ou e-mail.
-
-### Rotação do token (sem downtime)
-
-1. Grave `token_antigo,token_novo` no secret e force um novo deploy:
-   `aws ecs update-service --cluster pokemon-mcp --service pokemon-mcp --force-new-deployment`
-2. Migre os agentes para o token novo.
-3. Grave só `token_novo` no secret e force outro deploy.
-
 ### Variáveis de ambiente
 
 | Variável                    | Padrão                      |
@@ -164,10 +74,6 @@ Distribua o token aos times pelo próprio Secrets Manager (permissão IAM de lei
 | `POKEAPI_TIMEOUT_SECONDS`   | `10`                        |
 | `POKEAPI_CACHE_MAX_ENTRIES` | `256`                       |
 | `LOG_LEVEL`                 | `INFO`                      |
-| `MCP_TRANSPORT`             | `stdio`                     |
-| `MCP_HOST`                  | `127.0.0.1`                 |
-| `MCP_PORT`                  | `8000`                      |
-| `MCP_AUTH_TOKENS`           | vazio (obrigatório fora do loopback) |
 
 ## Desenvolvimento
 

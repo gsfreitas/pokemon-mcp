@@ -36,12 +36,6 @@ class Settings:
     http_timeout_seconds: float = 10.0
     cache_max_entries: int = 256
     log_level: str = "INFO"
-    # Transporte: "stdio" (processo local, padrão) ou "streamable-http" (rede).
-    transport: str = "stdio"
-    host: str = "127.0.0.1"
-    port: int = 8000
-    # Tokens Bearer aceitos (separados por vírgula na env). Mais de um permite rotação.
-    auth_tokens: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -50,8 +44,4 @@ class Settings:
             http_timeout_seconds=_env_float("POKEAPI_TIMEOUT_SECONDS", cls.http_timeout_seconds),
             cache_max_entries=_env_int("POKEAPI_CACHE_MAX_ENTRIES", cls.cache_max_entries),
             log_level=_env_log_level("LOG_LEVEL", cls.log_level),
-            transport=os.getenv("MCP_TRANSPORT", cls.transport),
-            host=os.getenv("MCP_HOST", cls.host),
-            port=_env_int("MCP_PORT", cls.port),
-            auth_tokens=tuple(t.strip() for t in os.getenv("MCP_AUTH_TOKENS", "").split(",") if t.strip()),
         )
